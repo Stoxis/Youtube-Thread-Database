@@ -8,6 +8,7 @@ import os
 import psycopg2
 import json
 import googleapiclient.discovery
+from operator import itemgetter
 
 # Establish a connection to the database
 conn = psycopg2.connect(
@@ -46,7 +47,6 @@ cur.execute("""
 # Commit the changes
 conn.commit()
 
-
 def api_retrieve_thread(id):
     # Disable OAuthlib's HTTPS verification when running locally.
     # *DO NOT* leave this option enabled in production.
@@ -57,14 +57,43 @@ def api_retrieve_thread(id):
     DEVELOPER_KEY = "PUT_DEV_KEY_HERE"
 
     youtube = googleapiclient.discovery.build(
-        api_service_name, api_version, developerKey = DEVELOPER_KEY)
+        api_service_name, api_version, developerKey=DEVELOPER_KEY)
 
+    response = {
+        "items": []
+    }
+    nextPageToken = None
     request = youtube.commentThreads().list(
-        part="snippet,replies",
-        id=id
+        part="snippet",
+        id=id,
+        maxResults=1,
+        moderationStatus="rejected",
+        order="time"
     )
-    response = request.execute()
-    return response
+    topLevelComment = request.execute()
+    while True:
+        request = youtube.comments().list(
+            part="snippet",
+            maxResults=100,
+            parentId=id,
+            pageToken=nextPageToken
+        )
+        result = request.execute()
+
+        items = result.get("items", [])
+        response["items"].extend(items)
+
+        nextPageToken = result.get("nextPageToken")
+        if not nextPageToken:
+            break
+    # Reorder the response items from oldest to newest based on publishedAt timestamp
+    response["items"].sort(key=lambda x: x["snippet"]["publishedAt"])
+    
+    # Add topLevelComment to the start of the thread
+    if "items" in topLevelComment and len(topLevelComment["items"]) > 0: # If toplevel comment isn't deleted
+        topLevelComment["items"][0]["replies"] = {"comments": []}
+        topLevelComment["items"][0]["replies"]["comments"].extend(response["items"])
+    return topLevelComment
 
 def process_and_save_data(response):
     global cur
@@ -79,6 +108,7 @@ def process_and_save_data(response):
     # If database message ID doesn't exist in response == deleted
     # If database message doesn't match message in response but ID is same == old edited
     # Create the comments variable
+    comments = []
     videoID = response["items"][0]["snippet"]["videoId"]
     threadID = response["items"][0]["id"]
     # Execute the query to check if the threadID exists in the database
@@ -91,77 +121,120 @@ def process_and_save_data(response):
     # Fetch the result
     existing_thread = cur.fetchone()
     
-    
-    # Check if the thread exists in the database
-    
     if existing_thread is not None:
-        new_comments = []
-        edited_comments = []
+        existing_comments = existing_thread[0]
         # Thread already exists in the database
         # Perform actions for an existing thread
-        print("Existing thread actions")
-        existing_comments = existing_thread[0]
-        # Loop through response and check for new, new edited, deleted, or old edited comments
-        for response_comment in response:
-            response_comment_id = response_comment['CommentID']
-            response_comment_text = response_comment['Comment']
         
-            # Check if response comment ID exists in existing_comments
-            matching_comment = None
-            for existing_comment in existing_comments:
-                existing_comment_id = existing_comment['CommentID']
-                existing_comment_text = existing_comment['Comment']
+        # API Message ID (OP)
+        #response["items"][0]["snippet"]["topLevelComment"]["id"]
+        # API Comment (OP)
+        #response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
         
-                if response_comment_id == existing_comment_id:
-                    matching_comment = existing_comment
-                    break
+        # API Message ID (Index)
+        #response["items"][0]["replies"]["comments"][index]["id"]
+        # API Comment (Index) 
+        #response["items"][0]["replies"]["comments"][index]["snippet"]["textDisplay"]
         
-            if matching_comment is None:
-                # Response comment ID doesn't exist in existing_comments == new
-                print("New comment:", response_comment_text)
-            elif response_comment_text != matching_comment['Comment']:
-                # Response comment doesn't match message in existing_comments but ID is the same == new edited
-                print("New edited comment:", response_comment_text)
+        # Database message id (OP)
+        #existing_comments[0]['CommentID']
+        # Database Comment (OP)
+        #existing_comments[0]['Comment']
+        
+        # Database message id (Index)
+        #existing_comments[index]['CommentID']
+        # Database Comment (Index)
+        #existing_comments[index]['Comment']
+        
+        # If API response message ID doesn't exist in database == new
+        # If API response message doesn't match message in database but ID is same == new edited
+        # If database message ID doesn't exist in API Response == deleted
+        # If database message doesn't match message in API Response but ID is same == old edited
+            
+    
+        # Check for new messages
+        # Check for edited messages
+        # Check for deleted messages
+        
+        old_comments = []
+        new_comments = []
+        allAPIIDs = []
+        allAPIMSGs = []
+        allDatabaseIDs = []
+        allDatabaseMSGs = []
+        # Add all the messages and IDs to arrays for easy checking
+        for existing_comment in existing_comments: # loop through database existing_comments[index]
+            allDatabaseIDs.append(existing_comment["CommentID"])
+            allDatabaseMSGs.append(existing_comment["Comment"])
+        allAPIIDs.append(response["items"][0]["snippet"]["topLevelComment"]["id"])
+        allAPIMSGs.append(response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"])
+        for comment in response["items"][0]["replies"]["comments"]: # loop through API response
+            allAPIIDs.append(comment["id"])
+            allAPIMSGs.append(comment["snippet"]["textDisplay"])
+        
+        # Check the database (unchanged, edited, deleted)
+        for existing_comment in existing_comments: 
+            if existing_comment["CommentID"] in allAPIIDs:
+                # ID Matches
+                comment_index = allAPIIDs.index(existing_comment["CommentID"]) # Retrieve index of the matching ID
+                if allAPIMSGs[comment_index] == existing_comment["Comment"]: # Get the comment for the matching ID
+                    # Message unchanged
+                    # Message and ID matches database
+                    # Save API message over database message
+                    if comment_index-1 == -1: # OP comment
+                        post = add_comment(response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorChannelId"]["value"], response["items"][0]["snippet"]["topLevelComment"]["id"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorDisplayName"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"], existing_comment["Comment_History"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["likeCount"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["publishedAt"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["updatedAt"], False)
+                    else:
+                        post = add_comment(response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["authorChannelId"]["value"], response["items"][0]["replies"]["comments"][comment_index-1]["id"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["authorDisplayName"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["textDisplay"], existing_comment["Comment_History"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["likeCount"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["publishedAt"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["updatedAt"], False)
+                    old_comments.append(post)
+                else:
+                    # Message edited
+                    # Message edited but ID matches database
+                    # Save API message with old message from database in a array containing all old messages
+                    if comment_index-1 == -1: # OP comment
+                        post = add_comment(response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorChannelId"]["value"], response["items"][0]["snippet"]["topLevelComment"]["id"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorDisplayName"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"], existing_comment["Comment_History"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["likeCount"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["publishedAt"], response["items"][0]["snippet"]["topLevelComment"]["snippet"]["updatedAt"], False)
+                    else:
+                        post = add_comment(response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["authorChannelId"]["value"], response["items"][0]["replies"]["comments"][comment_index-1]["id"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["authorDisplayName"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["textDisplay"], existing_comment["Comment_History"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["likeCount"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["publishedAt"], response["items"][0]["replies"]["comments"][comment_index-1]["snippet"]["updatedAt"], False)
+                    post["Comment_History"].append(existing_comment["Comment"]) # Add the old version of the comment
+                    old_comments.append(post)
             else:
-                # Comment exists in existing_comments
-                print("Existing comment:", response_comment_text)
+                # Deleted message
+                # If the comment ID is in the database but couldn't be found in the API response
+                # Save database message
+                post = add_comment(existing_comment["ChannelID"], existing_comment["CommentID"], existing_comment["Username"], existing_comment["Comment"], existing_comment["Comment_History"], existing_comment["Likes"], existing_comment["PostDate"], existing_comment["UpdateDate"], True)
+                old_comments.append(post)
+        # Check the API (new)
+        for comment in response["items"][0]["replies"]["comments"]:
+            if comment["id"] not in allDatabaseIDs:
+                # New message
+                # Comment ID not found in database
+                # Save comment  
+                new_comments.append(add_comment(comment["snippet"]["authorChannelId"]["value"], comment["id"], comment["snippet"]["authorDisplayName"], comment["snippet"]["textDisplay"], [], comment["snippet"]["likeCount"], comment["snippet"]["publishedAt"], comment["snippet"]["updatedAt"], False))
         
+        # Print the categorized comments
+        for comment in new_comments:
+            print("New Comment:")
+            print(comment)
         
-        # Loop through existing_comments and check for deleted or old edited comments
-        for existing_comment in existing_comments:
-            existing_comment_id = existing_comment['CommentID']
-            existing_comment_text = existing_comment['Comment']
-        
-            # Check if existing comment ID exists in response
-            matching_comment = None
-            for response_comment in response:
-                response_comment_id = response_comment['CommentID']
-                response_comment_text = response_comment['Comment']
-        
-                if existing_comment_id == response_comment_id:
-                    matching_comment = response_comment
-                    break
-        
-            if matching_comment is None:
-                # Existing comment ID doesn't exist in response == deleted
-                print("Deleted comment:", existing_comment_text)
-            elif existing_comment_text != matching_comment['Comment']:
-                # Existing comment doesn't match message in response but ID is the same == old edited
-                print("Old edited comment:", existing_comment_text)
-        print(existing_thread[0][0]['Likes'])
-        print("\n\n")
+        for index, comment in enumerate(old_comments):
+            if comment["Deleted"]:
+                print("Deleted comment:")
+            elif comment["Comment_History"] != existing_comments[index]["Comment_History"]:
+                print("Edited comment:")
+            else:
+                print("Unmodified comment:")
+            print(comment)  
+        comments = old_comments + new_comments
     else:
-        comments = []
         # Thread does not exist in the database
         # Perform actions for a new thread
-        print("New thread actions")
-        # Extract OP comment information
         
+        # Extract OP comment information
         op_comment = {
             'ChannelID': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorChannelId"]["value"],
             'CommentID': response["items"][0]["snippet"]["topLevelComment"]["id"],
             'Username': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["authorDisplayName"],
             'Comment': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"],
+            'Comment_History': [],	
             'Likes': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["likeCount"],
             'PostDate': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["publishedAt"],
             'UpdateDate': response["items"][0]["snippet"]["topLevelComment"]["snippet"]["updatedAt"],
@@ -178,32 +251,52 @@ def process_and_save_data(response):
                 'CommentID': reply["id"],
                 'Username': reply["snippet"]["authorDisplayName"], 
                 'Comment': reply["snippet"]["textDisplay"],	
+                'Comment_History': [],
                 'Likes': reply["snippet"]["likeCount"],
                 'PostDate': reply["snippet"]["publishedAt"],
                 'UpdateDate': reply["snippet"]["updatedAt"],
                 'Deleted': False
             }
             comments.append(reply_comment)
-        channelIDs = set(comment['ChannelID'] for comment in comments)
-        comments_json = json.dumps(comments)
-        # Insert a new row into Threads table, update if threadID already exists
-        cur.execute("""
-            INSERT INTO Threads (VideoID, ThreadID, Thread, ChannelIDs)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (ThreadID)
-            DO UPDATE SET
-                Thread = excluded.Thread,
-                ChannelIDs = excluded.ChannelIDs
-        """, (videoID, threadID, comments_json, list(channelIDs)))  
-        
+        print(comments)
+    comments_json = json.dumps(comments)
+    channelIDs = set(comment['ChannelID'] for comment in comments)
+    # Insert a new row into Threads table, update if threadID already exists
+    cur.execute("""
+        INSERT INTO Threads (VideoID, ThreadID, Thread, ChannelIDs)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (ThreadID)
+        DO UPDATE SET
+            Thread = excluded.Thread,
+            ChannelIDs = excluded.ChannelIDs
+    """, (videoID, threadID, comments_json, list(channelIDs)))  
+     
     conn.commit()
     return comments
 
+def add_comment(ChannelID, CommentID, Username, Comment, Comment_History, Likes, PostDate, UpdateDate, Deleted):
+    comment = {
+        'ChannelID': ChannelID,
+        'CommentID': CommentID,
+        'Username': Username, 
+        'Comment': Comment,	
+        'Comment_History': Comment_History,	
+        'Likes': Likes,
+        'PostDate': PostDate,
+        'UpdateDate': UpdateDate,
+        'Deleted': Deleted
+    }
+    return comment
+    
+
 if __name__ == "__main__":
     api_response = api_retrieve_thread("")
+    json_object = json.dumps(api_response, indent = 4) 
+    with open('api.json', 'w') as f:
+        f.write(json_object)
     comments = process_and_save_data(api_response)
     # Print the recreated comments variable
-    print(comments)
+    #print(comments)
     # Close the cursor and the connection
     cur.close()
     conn.close()
