@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>VisJS Network Graph</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style type="text/css">
+    body {
+      margin: 0;
+      background-color: #000;
+      overflow: hidden;
+    }
+    #mynetwork {
+      width: 100%;
+      height: 100vh;
+      background-color: #000;
+    }
+	#searchdiv {
+	  z-index: 20;
+	  position: absolute;
+	  padding: 10px;
+	  text-align: center;
+	  left: 0;
+	  right: 0;
+	  margin-left: auto;
+	  margin-right: auto;
+	  max-width: max-content;
+	  min-width: min(410px, 90%);
+	  overflow-y: auto;
+	  justify-content: center;
+	  top: 10px;
+	  background-color: rgba(0, 0, 0, 0.8);
+	}	
+	#searchresults{
+	  display: block;
+	  max-height: 325px;
+	  overflow-y: auto;
+	  padding-left: 10px;
+	  padding-right: 10px;
+	}	
+    #infodiv {
+      position: absolute;
+      padding: 10px;
+      left: 30px;
+      bottom: 10px;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="maindiv" id="mynetwork"></div>
+
+  <div id="searchdiv">
+    <input style="width: min(400px, 80%); margin: 5px" id="searchinput" type="text" placeholder="Search nodes">
+    <div id="searchresults" style="display: block; max-height: 325px; overflow-y: auto; padding-left: 10px; padding-right: 10px;"></div>
+  </div>
+
+  <div id="infodiv">
+    <p id="infotext"></p>
+  </div>
+
+<script type="text/javascript">
+  // Sample data
+  const nodes = [
+    { id: 1, label: "Node 1", title: "Additional information for Node 1" },
+    { id: 2, label: "Node 2", title: "Additional information for Node 2" },
+    { id: 3, label: "Node 3", title: "Additional information for Node 3" },
+  ];
+  const edges = [
+    { from: 1, to: 2 },
+    { from: 2, to: 3 },
+    { from: 3, to: 1 },
+  ];
+
+  // Create a new network instance
+  const container = document.getElementById("mynetwork");
+  const data = { nodes, edges };
+  const options = {};
+  const network = new vis.Network(container, data, options);
+
+  // Add event listener for node click
+  network.on("click", function (params) {
+    const infodiv = document.getElementById("infodiv");
+    const infotext = document.getElementById("infotext");
+
+    if (params.nodes.length > 0) {
+      const nodeId = params.nodes[0];
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node) {
+        infotext.textContent = node.title;
+        infodiv.style.display = "inline";
+      }
+    } else {
+      infodiv.style.display = "none";
+    }
+  });
+
+  // Search functionality
+  const searchInput = document.getElementById("searchinput");
+  const searchResults = document.getElementById("searchresults");
+  const myNetworkDiv = document.getElementById("mynetwork");
+
+  searchInput.addEventListener("input", function (event) {
+    const searchText = event.target.value.toLowerCase();
+    const filteredNodes = nodes.filter(
+      (node) =>
+        node.label.toLowerCase().includes(searchText) ||
+        node.title.toLowerCase().includes(searchText)
+    );
+
+    displaySearchResults(filteredNodes);
+  });
+
+  myNetworkDiv.addEventListener("focusin", function () {
+    searchResults.style.display = "none";
+  });
+
+  searchInput.addEventListener("focus", function () {
+    if (searchInput.value) {
+      searchResults.style.display = "block";
+    }
+  });
+
+  function displaySearchResults(filteredNodes) {
+    searchResults.innerHTML = "";
+    filteredNodes.forEach(function (node) {
+      const resultItem = document.createElement("div");
+      resultItem.textContent = node.label;
+	  resultItem.style.color = "#ffffff" // TODO: Change result color depending on type
+      resultItem.addEventListener("click", function () {
+        const nodeId = node.id;
+        const position = network.getPositions([nodeId])[nodeId];
+        network.moveTo({ position, scale: 2, animation: true });
+      });
+      searchResults.appendChild(resultItem);
+    });
+    searchResults.style.display = filteredNodes.length > 0 ? "block" : "none";
+  }
+</script>
+
+</body>
+</html>

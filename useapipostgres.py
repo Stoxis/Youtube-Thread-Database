@@ -6,6 +6,7 @@
 
 import os
 import psycopg2
+from psycopg2 import extras
 import json
 import googleapiclient.discovery
 from operator import itemgetter
@@ -13,13 +14,13 @@ from operator import itemgetter
 # Establish a connection to the database
 conn = psycopg2.connect(
     host="localhost",
-    database="database_name",
+    database="put_database",
     user="put_username",
     password="put_password"
 )
 
 # Create a cursor
-cur = conn.cursor()
+cur = conn.cursor(cursor_factory=extras.DictCursor)
 
 # Create the Threads table if it doesn't exist
 cur.execute("""
@@ -334,6 +335,103 @@ def process_and_save_data(response):
     conn.commit()
     return comments
 
+def create_vis_network():
+    global cur
+    global conn
+    #dictcur = conn.cursor(cursor_factory=extras.DictCursor)
+    # Fetch data from the Users table
+    cur.execute("SELECT * FROM Users")
+    user_data = [dict(row) for row in cur.fetchall()]
+
+    # Fetch data from the Threads table
+    cur.execute("SELECT * FROM Threads")
+    thread_data = [dict(row) for row in cur.fetchall()]
+
+    # Close the cursor and connection
+    cur.close()
+    conn.close()
+
+    # Create empty lists to hold nodes and edges
+    nodes = []
+    edges = []
+    
+    # Loop through user data and create user nodes
+    for user in user_data:
+        channel_id = user["channelid"]
+        profile_pictures = user["profilepictures"]
+        usernames = user["usernames"]
+        thread_ids = user["threadids"]
+
+        # Create a unique node ID for the user
+        node_id = f"user_{channel_id}"
+
+        # Create the user node
+        user_node = {
+            "id": node_id,
+            "label": usernames[0],  # Assuming the first username is the primary one
+            "shape": "box",
+            "image": profile_pictures[0],  # Assuming the first profile picture is the primary one
+            "title": f"Channel ID: {channel_id}\nProfile Pictures: {', '.join(profile_pictures)}\nUsernames: {', '.join(usernames)}"
+        }
+
+        # Add the user node to the nodes list
+        nodes.append(user_node)
+
+    # Loop through thread data and create thread nodes and edges
+    for thread in thread_data:
+        # Extract thread information
+        thread_id = thread["threadid"]
+        video_id = thread["videoid"]
+        description = thread["description"] or ""
+        tags = thread["tags"] or []
+        channel_ids = thread["channelids"]
+    
+        # Convert tags and channel_ids to lists if they are not already
+        if not isinstance(tags, list):
+            tags = [tags]
+        if not isinstance(channel_ids, list):
+            channel_ids = [channel_ids]
+    
+        # Create a unique node ID for the thread
+        thread_node_id = f"thread_{thread_id}"
+    
+        # Create the thread node
+        thread_node = {
+            "id": thread_node_id,
+            "label": f"Thread {thread_id}",
+            "shape": "box",
+            "title": f"Thread ID: {thread_id}\nVideo ID: {video_id}\nDescription: {description}\nTags: {', '.join(tags)}\nChannel IDs: {', '.join(channel_ids)}"
+        }
+    
+        # Add the thread node to the nodes list
+        nodes.append(thread_node)
+    
+        # Create edges connecting thread nodes to user nodes
+        for channel_id in channel_ids:
+            user_node_id = f"user_{channel_id}"
+            edge = {
+                "from": user_node_id,
+                "to": thread_node_id
+            }
+            edges.append(edge)
+    
+        # Create edges connecting thread nodes to video nodes
+        video_node_id = f"video_{video_id}"
+        video_edge = {
+            "from": video_node_id,
+            "to": thread_node_id
+        }
+        edges.append(video_edge)
+    
+
+    # Create a dictionary with the nodes and edges
+    network_data = {
+        "nodes": nodes,
+        "edges": edges
+    }
+
+    return network_data
+
 def add_comment(ChannelID, CommentID, Username, Comment, Comment_History, Likes, PostDate, UpdateDate, Deleted):
     comment = {
         'ChannelID': ChannelID,
@@ -350,12 +448,14 @@ def add_comment(ChannelID, CommentID, Username, Comment, Comment_History, Likes,
     
 
 if __name__ == "__main__":
-    api_response = api_retrieve_thread("")
-    json_object = json.dumps(api_response, indent = 4) 
-    with open('api.json', 'w') as f:
-        f.write(json_object)
-    if "items" in api_response and len(api_response["items"]) > 0: # If toplevel comment isn't deleted
-        comments = process_and_save_data(api_response)
+    #api_response = api_retrieve_thread("")
+    #json_object = json.dumps(api_response, indent = 4) 
+    #with open('api.json', 'w') as f:
+    #    f.write(json_object)
+    #if "items" in api_response and len(api_response["items"]) > 0: # If toplevel comment isn't deleted
+    #    comments = process_and_save_data(api_response)
+    vis_network_data = create_vis_network()
+    print(vis_network_data)
     # Print the recreated comments variable
     #print(comments)
     # Close the cursor and the connection
