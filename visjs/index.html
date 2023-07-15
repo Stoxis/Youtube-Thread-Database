@@ -37,7 +37,7 @@
 	  padding-left: 10px;
 	  padding-right: 10px;
 	}	
-    #infodiv {
+    #infodiv { /* Add phone font resizing and positioning */
       position: absolute;
       padding: 10px;
       left: 30px;
@@ -46,7 +46,18 @@
       color: #fff;
       display: none;
     }
-  </style>
+	.progress-bar {
+      position: absolute;
+      display: none;
+      top: 45%;
+      bottom: 45%;
+      left: 30%;
+      right: 30%;
+      width: 40%;
+      height: 10%;
+      z-index: 10;
+	}  
+</style>
 </head>
 <body>
   <div class="maindiv" id="mynetwork"></div>
@@ -59,7 +70,7 @@
   <div id="infodiv">
     <p id="infotext"></p>
   </div>
-
+<progress class="progress-bar" id="loadingbar" value="0" max="10000" ellipse=""></progress>
 <script type="text/javascript">
   // Sample data
   const nodes = [
@@ -74,11 +85,110 @@
   ];
 
   // Create a new network instance
-  const container = document.getElementById("mynetwork");
-  const data = { nodes, edges };
-  const options = {};
-  const network = new vis.Network(container, data, options);
-
+    var container = document.getElementById("mynetwork");
+    var data = {
+      nodes: nodes,
+      edges: edges
+    };
+    var options = {
+      layout: {
+        randomSeed: 0,
+        //clusterThreshold: 25
+      },
+      interaction: {
+        hideEdgesOnZoom: true,
+        hideEdgesOnDrag: true,
+        selectConnectedEdges: false
+      },
+      nodes: {
+        shape: "square",
+        size: 10,
+        font: {
+          face: 'courier new',
+          size: 6,
+          color: '#ffffff',
+          strokeWidth: 0.5,
+          strokeColor: '#000000'
+        }
+      },
+      edges: {
+        width: 1.25,
+        selectionWidth: 4,
+        smooth: false
+      },
+	  physics: {
+	    enabled: true, // Enable physics simulation initially
+	    barnesHut: {
+	      gravitationalConstant: -2000,
+	      centralGravity: 1.1,
+	      springLength: 80,
+	      springConstant: 0.03,
+	      damping: 0.10,
+	      avoidOverlap: 1 // Adjust the overlap avoidance strength as needed
+	    },
+	    stabilization: {
+	      enabled: true,
+	      iterations: 500,
+	      updateInterval: 10
+	    },	  
+  repulsion: {
+    nodeDistance: 200, // Increase the repulsion distance between nodes
+    springLength: 100, // Maintain spring length for other nodes
+    centralGravity: 0.1,
+    damping: 0.09
+  },
+	  },
+	  groups: {
+	    user: {
+	      shape: "image",
+          borderWidth: 2,
+          size: 15,
+            shapeProperties: {
+              useBorderWithImage: true,
+            },
+	    },
+	    video: {
+	      shape: "square",
+		  size: 20,
+	      color: "#2B7CE9", // blue
+	    },
+	    thread: {
+	      shape: "triangle",
+	      color: "#5A1E5C", // purple
+	    },
+	  },
+    };
+    network = new vis.Network(container, data, options);
+    // Update progress bar
+    network.on("stabilizationProgress", function (params) {
+      document.getElementById("loadingbar").setAttribute('value', (10000 * params.iterations) / params.total);
+    });
+    // Disable progress bar after load
+    network.on("stabilizationIterationsDone", function (params) {
+      document.getElementById("loadingbar").style.display = 'none';
+      document.getElementById('infodiv').style.display = 'none';
+	  network.setOptions({
+	    physics: {
+	      enabled: false
+	    }
+	  });
+    });
+    // Disable selecting edges
+    network.on('click', handleSelect);
+    network.on('dragStart', handleDrag);
+    network.on('dragEnd', handleDragEnd);
+    network.on('oncontext', (event) => {
+      event.event.preventDefault();
+      if(lastSelectedNode === undefined) {
+        return;
+      }
+      const node = network.getNodeAt(event.pointer.DOM);
+      if(node === undefined || node.id === lastSelectedNode) {
+        return;
+      }
+      selectShortestPath(lastSelectedNode, node);
+    })
+	
   // Add event listener for node click
   network.on("click", function (params) {
     const infodiv = document.getElementById("infodiv");
@@ -88,14 +198,157 @@
       const nodeId = params.nodes[0];
       const node = nodes.find((n) => n.id === nodeId);
       if (node) {
-        infotext.textContent = node.title;
+		//console.log(nodeId)
+		setNodeInformation(nodeId)
+        //infotext.textContent = node.title;
         infodiv.style.display = "inline";
       }
     } else {
       infodiv.style.display = "none";
     }
   });
+  var lastSelectedNode = undefined;
+  function handleDrag(event) {
+    var nodeID = network.getNodeAt(event.pointer.DOM);
+    if (nodeID !== undefined) {
+      lastSelectedNode = nodeID;
+      network.setSelection({
+        nodes: [nodeID]
+      });
+    }
+  }
+  function handleDragEnd(event) {
+    if(event.nodes.length > 0) {
+      lastSelectedNode = undefined;
+      handleSelect(event);
+    }
+  }
+  function handleSelect(event) {
+	  var nodeID = network.getNodeAt(event.pointer.DOM);
+      if (nodeID === undefined || (event.nodes.length === 0 && event.edges.length > 0)) {
+        lastSelectedNode = undefined;
+        network.setSelection({
+          nodes: [],
+          edges: []
+        })
+        setNodeInformation(false);
+      } else {
+        var nodeEdges = network.nodesHandler.body.nodes[event.nodes[0]].edges;
+        lastSelectedNode = nodeID;
+        network.setSelection({
+          nodes: nodeEdges.flatMap(e => [e.fromId, e.toId]).concat([nodeID]),
+          edges: nodeEdges.map(e => e.id)
+        })
+        setNodeInformation(event.nodes[0]);
+      }
+  }
+  function getShortestPathNodes(start, end) {
+    const startMap = new Map([[start, null]]);
+    const endMap = new Map([[end, null]]);
 
+    let startNodesToProcess = [start];
+    let endNodesToProcess = [end];
+    let link = undefined;
+    let i = 1;
+    const updateMap = (nodeID, ourMap, theirMap) => {
+      const node = network.nodesHandler.body.nodes[nodeID];
+      let newNodes = []
+        for(const edge of node.edges) {
+          const otherNodeID = edge.fromId === nodeID ? edge.toId : edge.fromId;
+          if(ourMap.get(otherNodeID) === undefined) {
+            ourMap.set(otherNodeID, nodeID);
+            newNodes.push(otherNodeID);
+          }
+        }
+      return newNodes;
+    }
+    const getOutput = (treeMidID) => {
+      let output = [];
+      let start = [];
+      let end = []
+      for(let n = treeMidID; n !== undefined; n = startMap.get(n)) {
+        if(n !== null) {
+          output.unshift(n);
+        }
+      }
+      for(let n = endMap.get(treeMidID); n !== undefined; n = endMap.get(n)) {
+        if(n !== null) {
+          output.push(n);
+        }
+      }
+      return output;
+    }
+    while(startNodesToProcess.length > 0 || endNodesToProcess.length > 0) {
+      let newStartNodes = [];
+      let newEndNodes = [];
+      for(const nodeID of startNodesToProcess) {
+        newStartNodes.push(...updateMap(nodeID, startMap, endMap))
+      }
+      for(const nodeID of newStartNodes) {
+        if(endMap.get(nodeID) !== undefined) {
+          let output = [];
+          output.push(...getOutput(nodeID));
+          return output;
+        }
+      }
+      for(const nodeID of endNodesToProcess) {
+        newEndNodes.push(...updateMap(nodeID, endMap, startMap));
+      }
+      for(const nodeID of newEndNodes) {
+        if(startMap.get(nodeID) !== undefined) {
+          let output = [];
+          output.push(...getOutput(nodeID));
+          return output;
+        }
+      }
+      startNodesToProcess = newStartNodes;
+      endNodesToProcess = newEndNodes;
+      i++;
+    }
+    return null;
+  }
+  function selectShortestPath(start, end) {
+    const nodeIDs = getShortestPathNodes(start, end);
+    if(nodeIDs === null) {
+      return;
+    }
+    const edgeIDs = [];
+    for(let i = 0; i < nodeIDs.length - 1; i++) {
+      const node = network.nodesHandler.body.nodes[nodeIDs[i]];
+      const nextNode = network.nodesHandler.body.nodes[nodeIDs[i+1]];
+      const startNode = (node.edges.length <= nextNode.edges.length ? node : nextNode);
+      const endNode = (node.edges.length <= nextNode.edges.length ? nextNode : node);
+
+      const edge = startNode.edges.find(edge => {
+        return edge.fromId === endNode.id || edge.toId === endNode.id;
+      })
+      edgeIDs.push(edge.id);
+    }
+    network.setSelection({
+      nodes: nodeIDs,
+      edges: edgeIDs
+    })
+  }
+  function setNodeInformation(nodeID) {
+    if(nodeID === false) {
+      document.getElementById('infodiv').style.display = 'none';
+      return;
+    }
+    document.getElementById('infodiv').style.display = 'inline';
+    var nodeOptions = network.nodesHandler.body.nodes[nodeID].options;
+    var edges = network.nodesHandler.body.nodes[nodeID].edges;
+    
+    var textElement = document.getElementById('infotext');
+    var string = "";
+    string += `<p>${nodeOptions.label}</p>`;
+    string += `<p>title: ${nodeOptions.title}</p>`;
+    string += `<p>Aliases:\n`;
+    string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+    string += `</span></div></p>`;
+
+    textElement.innerHTML = string;
+  }
+	
   // Search functionality
   const searchInput = document.getElementById("searchinput");
   const searchResults = document.getElementById("searchresults");
@@ -132,12 +385,12 @@
         const nodeId = node.id;
         const position = network.getPositions([nodeId])[nodeId];
         network.moveTo({ position, scale: 2, animation: true });
+		setNodeInformation(nodeId)
       });
       searchResults.appendChild(resultItem);
     });
     searchResults.style.display = filteredNodes.length > 0 ? "block" : "none";
   }
 </script>
-
 </body>
 </html>
