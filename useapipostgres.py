@@ -369,7 +369,7 @@ def create_vis_network():
         user_node = {
             "id": node_id,
             "label": usernames[0],  # Assuming the first username is the primary one
-            "shape": "box",
+            "group": "user",
             "image": profile_pictures[0],  # Assuming the first profile picture is the primary one
             "title": f"Channel ID: {channel_id}\nProfile Pictures: {', '.join(profile_pictures)}\nUsernames: {', '.join(usernames)}"
         }
@@ -399,12 +399,26 @@ def create_vis_network():
         thread_node = {
             "id": thread_node_id,
             "label": f"Thread {thread_id}",
-            "shape": "box",
+            "group": "thread",
             "title": f"Thread ID: {thread_id}\nVideo ID: {video_id}\nDescription: {description}\nTags: {', '.join(tags)}\nChannel IDs: {', '.join(channel_ids)}"
         }
     
         # Add the thread node to the nodes list
         nodes.append(thread_node)
+        
+        # Create a unique node ID for the thread
+        video_node_id = f"video_{video_id}"
+        
+        # Create the thread node
+        video_node = {
+            "id": video_node_id,
+            "label": f"Video {video_id}",
+            "group": "video",
+            "title": f"Video ID: {video_id}"
+        }
+    
+        # Add the thread node to the nodes list
+        nodes.append(video_node)
     
         # Create edges connecting thread nodes to user nodes
         for channel_id in channel_ids:
@@ -455,7 +469,9 @@ if __name__ == "__main__":
     #if "items" in api_response and len(api_response["items"]) > 0: # If toplevel comment isn't deleted
     #    comments = process_and_save_data(api_response)
     vis_network_data = create_vis_network()
-    print(vis_network_data)
+    print(vis_network_data["nodes"])
+    print("\n\n")
+    print(vis_network_data["edges"])
     # Print the recreated comments variable
     #print(comments)
     # Close the cursor and the connection
