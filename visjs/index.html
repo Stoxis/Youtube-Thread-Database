@@ -4,59 +4,98 @@
   <title>VisJS Network Graph</title>
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style type="text/css">
-    body {
-      margin: 0;
-      background-color: #000;
-      overflow: hidden;
-    }
-    #mynetwork {
-      width: 100%;
-      height: 100vh;
-      background-color: #000;
-    }
-	#searchdiv {
-	  z-index: 20;
-	  position: absolute;
-	  padding: 10px;
-	  text-align: center;
-	  left: 0;
-	  right: 0;
-	  margin-left: auto;
-	  margin-right: auto;
-	  max-width: max-content;
-	  min-width: min(410px, 90%);
-	  overflow-y: auto;
-	  justify-content: center;
-	  top: 10px;
-	  background-color: rgba(0, 0, 0, 0.8);
-	}	
-	#searchresults{
-	  display: block;
-	  max-height: 325px;
-	  overflow-y: auto;
-	  padding-left: 10px;
-	  padding-right: 10px;
-	}	
-    #infodiv { /* Add phone font resizing and positioning */
-      position: absolute;
-      padding: 10px;
-      left: 30px;
-      bottom: 10px;
-      background-color: rgba(0, 0, 0, 0.8);
-      color: #fff;
-      display: none;
-    }
-	.progress-bar {
-      position: absolute;
-      display: none;
-      top: 45%;
-      bottom: 45%;
-      left: 30%;
-      right: 30%;
-      width: 40%;
-      height: 10%;
-      z-index: 10;
-	}  
+html, body, .maindiv, svg { width: 100%; height: 100%; background-color: black; overflow: hidden; overflow-x: hidden}
+
+#mynetwork {
+  width: 100%;
+  height: 100vh;
+  background-color: #000;
+}
+
+#searchdiv {
+  z-index: 20;
+  position: absolute;
+  padding: 10px;
+  text-align: center;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: max-content;
+  min-width: min(410px, 90%);
+  overflow-y: auto;
+  justify-content: center;
+  top: 10px;
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+#searchresults {
+  display: block;
+  max-height: 325px;
+  overflow-y: auto;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+#infodiv {
+  z-index: 10;
+  position: absolute;
+  padding: 10px;
+  left: 30px;
+  bottom: 10px;
+  background-color: rgba(0, 0, 0, 0.8);
+  margin-right: 70vw;
+}
+
+/* Media query for phone screens */
+@media (max-width: 600px) {
+  #infodiv {
+    margin-right: 0;
+  }
+}
+
+/* Solid border */
+hr.solid {
+  border-top: 3px solid #fff;
+}
+
+.description-container {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-right: 25px;
+  overflow-wrap: break-word;
+  color: white;
+  text-align: left;
+  font-family: 'Courier New', Courier, monospace;
+  white-space: pre-line;
+}
+
+p, span, ul, li, a {
+  white-space: pre-line;
+  color: white;
+  text-align: left;
+  font-family: 'Courier New', Courier, monospace;
+}
+.progress-bar {
+  position: absolute;
+  display: none;
+  top: 45%;
+  bottom: 45%;
+  left: 30%;
+  right: 30%;
+  width: 40%;
+  height: 10%;
+  z-index: 10;
+}
+
+.vis-label {
+  position: absolute;
+  z-index: 1;
+  text-align: center;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
 </style>
 </head>
 <body>
@@ -67,7 +106,7 @@
     <div id="searchresults" style="display: block; max-height: 325px; overflow-y: auto; padding-left: 10px; padding-right: 10px;"></div>
   </div>
 
-  <div id="infodiv">
+  <div id="infodiv" style="display: inline;">
     <p id="infotext"></p>
   </div>
 <progress class="progress-bar" id="loadingbar" value="0" max="10000" ellipse=""></progress>
@@ -105,7 +144,7 @@
         size: 10,
         font: {
           face: 'courier new',
-          size: 6,
+          size: 5,
           color: '#ffffff',
           strokeWidth: 0.5,
           strokeColor: '#000000'
@@ -150,11 +189,11 @@
 	    video: {
 	      shape: "square",
 		  size: 20,
-	      color: "#2B7CE9", // blue
+	      //color: "#2B7CE9", // blue
 	    },
 	    thread: {
 	      shape: "triangle",
-	      color: "#5A1E5C", // purple
+	      //color: "#5A1E5C", // purple
 	    },
 	  },
     };
@@ -340,29 +379,96 @@
     
     var textElement = document.getElementById('infotext');
     var string = "";
-    string += `<p>${nodeOptions.label}</p>`;
-    string += `<p>title: ${nodeOptions.title}</p>`;
-    string += `<p>Aliases:\n`;
-    string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
-    string += `</span></div></p>`;
-
-    textElement.innerHTML = string;
+	//console.log(nodeOptions) // user, thread, video TODO: ADD IF STATEMENT AND ADD ALL THE NODE INFO AND LINKS HERE
+	if(nodeOptions.group === "user") {
+		string += `<a href="${nodeOptions.url}" target="_blank">${nodeOptions.label}</a>`;
+		string += `<p>Pictures:\n`;
+		string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+		string += "\t" + nodeOptions.profilepictures.join("<hr class=\"solid\">\n\t");
+		string += `</span></div></p>`;
+		string += `<p>Usernames:\n`;
+		string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+		string += "\t" + nodeOptions.usernames.join("\n\t");
+		string += `</span></div></p>`;
+		if (nodeOptions.description !== "") {
+			string += `<p>Description:\n`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.description;
+			string += `</span></div></p>`;
+		}
+	} else if(nodeOptions.group === "thread"){
+		string += `<a href="${nodeOptions.url}" target="_blank">${nodeOptions.label}</a>`;
+		if (nodeOptions.description !== "") {
+			string += `<p>Description:\n`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.description;
+			string += `</span></div></p>`;
+		}
+		if (nodeOptions.tags[0] !== undefined) {
+			string += `<p>Tags:\n`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.tags.join("\n\t");
+			string += `</span></div></p>`;
+		}
+	} else if(nodeOptions.group === "video"){
+		string += `<a href="${nodeOptions.url}" target="_blank">${nodeOptions.label}</a>`;
+		if (nodeOptions.titles[1] !== null) {
+			string += `<p>Titles:\n`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.titles.join("\n\t");
+			string += `</span></div></p>`;
+		}
+		string += `<p>Total Views:\n`;
+		string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+		string += "\t" + nodeOptions.views;
+		string += `</span></div></p>`;
+		string += `<p>Total Comments:\n`;
+		string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+		string += "\t" + nodeOptions.commentcount;
+		string += `</span></div></p>`;
+		string += `<p>Threads:\n`;
+		string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+		string += "\t" + nodeOptions.threadids.join("\n\t");
+		string += `</span></div></p>`;
+		if (nodeOptions.description[1] !== undefined) {
+			string += `<p>Descriptions:</p>`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.description.join("<hr class=\"solid\">\n\t");
+			string += `</span></div>`;
+		} else{
+			string += `<p>Description:\n`;
+			string += `<div style="max-height: min(600px, 40vh, 30vw); overflow-y: auto; padding-right: 25px"><span>`;
+			string += "\t" + nodeOptions.description.join("\n\t");
+			string += `</span></div></p>`;
+		}
+	} else{
+    	string += `<p>${nodeOptions.label}</p>`;
+	}
+  	textElement.innerHTML = string;
   }
-	
+  function focusOn(nodeID) {
+    var nodeEdges = network.nodesHandler.body.nodes[nodeID].edges;
+	var position = network.getPositions([nodeID])[nodeID];
+    lastSelectedNode = nodeID;
+    network.setSelection({
+      nodes: nodeEdges.flatMap(e => [e.fromId, e.toId]).concat([nodeID]),
+      edges: nodeEdges.map(e => e.id)
+    })
+	setNodeInformation(nodeID);
+	network.focus(nodeID, {locked: false, scale: 4, animation: true, offset: {x: 0, y: 0}});
+    //network.moveTo({ position, scale: 5, animation: true });
+  }
   // Search functionality
   const searchInput = document.getElementById("searchinput");
   const searchResults = document.getElementById("searchresults");
   const myNetworkDiv = document.getElementById("mynetwork");
 
-  searchInput.addEventListener("input", function (event) {
-    const searchText = event.target.value.toLowerCase();
-    const filteredNodes = nodes.filter(
-      (node) =>
-        node.label.toLowerCase().includes(searchText) ||
-        node.title.toLowerCase().includes(searchText)
-    );
+  window.addEventListener("load", function() {
+    performSearch(); // Trigger the search functionality when the page finishes loading
+  });
 
-    displaySearchResults(filteredNodes);
+  searchInput.addEventListener("input", function (event) {
+    performSearch();
   });
 
   myNetworkDiv.addEventListener("focusin", function () {
@@ -375,6 +481,17 @@
     }
   });
 
+function performSearch() {
+  const searchText = searchInput.value.toLowerCase();
+  const filteredNodes = nodes.filter(
+    (node) =>
+      node.label.toLowerCase().includes(searchText) ||
+      node.id.toLowerCase().includes(searchText)
+  );
+
+  displaySearchResults(filteredNodes);
+}
+
   function displaySearchResults(filteredNodes) {
     searchResults.innerHTML = "";
     filteredNodes.forEach(function (node) {
@@ -383,9 +500,8 @@
 	  resultItem.style.color = "#ffffff" // TODO: Change result color depending on type
       resultItem.addEventListener("click", function () {
         const nodeId = node.id;
-        const position = network.getPositions([nodeId])[nodeId];
-        network.moveTo({ position, scale: 2, animation: true });
-		setNodeInformation(nodeId)
+		focusOn(nodeId); // Select, Move to, Zoom in 
+		//network.moveTo({ position, scale: 5, animation: true });
       });
       searchResults.appendChild(resultItem);
     });

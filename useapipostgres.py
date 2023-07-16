@@ -10,6 +10,8 @@ from psycopg2 import extras
 import json
 import googleapiclient.discovery
 from operator import itemgetter
+import colorsys
+import time
 
 # Establish a connection to the database
 conn = psycopg2.connect(
@@ -31,6 +33,18 @@ cur.execute("""
         Tags TEXT[],
         Thread JSONB,
         ChannelIDs TEXT[]
+    )
+""")
+
+# Create the Videos table if it doesn't exist
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS Videos (
+        VideoID TEXT PRIMARY KEY,
+        Title TEXT[],
+        Description TEXT[],
+        CommentCount INT,
+        Views INT,
+        ThreadIDs TEXT[]
     )
 """)
 
@@ -56,7 +70,7 @@ def api_retrieve_thread(id):
 
     api_service_name = "youtube"
     api_version = "v3"
-    DEVELOPER_KEY = "PUT_DEV_KEY_HERE"
+        api_service_name, api_version, developerKey=DEVELOPER_KEY)
 
     youtube = googleapiclient.discovery.build(
         api_service_name, api_version, developerKey=DEVELOPER_KEY)
@@ -88,14 +102,38 @@ def api_retrieve_thread(id):
         nextPageToken = result.get("nextPageToken")
         if not nextPageToken:
             break
+    
+    # Retrieve video information
+    video_request = youtube.videos().list(
+        part="snippet,statistics",
+        id=topLevelComment["items"][0]["snippet"]["videoId"]
+    )
+    video_response = video_request.execute()
+
+    # Extract video details
+    video_info = video_response["items"][0]["snippet"]
+    video_statistics = video_response["items"][0]["statistics"]
+    
     # Reorder the response items from oldest to newest based on publishedAt timestamp
     response["items"].sort(key=lambda x: x["snippet"]["publishedAt"])
-    
+
     # Add topLevelComment to the start of the thread
-    if "items" in topLevelComment and len(topLevelComment["items"]) > 0: # If toplevel comment isn't deleted
+    if "items" in topLevelComment and len(topLevelComment["items"]) > 0:  # If top-level comment isn't deleted
         topLevelComment["items"][0]["replies"] = {"comments": []}
         topLevelComment["items"][0]["replies"]["comments"].extend(response["items"])
+
+    # Add video information to topLevelComment
+    topLevelComment["items"][0]["videoDetails"] = {
+        "title": video_info["title"],
+        "description": video_info["description"],
+        "uploadDate": video_info["publishedAt"],
+        "commentCount": video_statistics["commentCount"],
+        "viewCount": video_statistics["viewCount"],
+        "likeCount": video_statistics["likeCount"]
+    }
+
     return topLevelComment
+
 
 def process_and_save_data(response):
     global cur
@@ -126,6 +164,27 @@ def process_and_save_data(response):
     
     # Fetch the result
     existing_thread = cur.fetchone()
+    
+    # Execute the query to check if the videoID exists in the database
+    cur.execute("""
+        SELECT *
+        FROM Videos
+        WHERE VideoID = %s
+    """, (videoID,))   
+    
+    # Fetch the result
+    existing_video = [dict(row) for row in cur.fetchall()]
+    
+    # Extract Video information
+    videoDetails = response["items"][0]["videoDetails"]
+    video = {
+        'Title': videoDetails["title"],
+        'Description': videoDetails["description"],
+        'Upload_Date': videoDetails["uploadDate"],
+        'Comment_Count': videoDetails["commentCount"],
+        'Views': videoDetails["viewCount"],
+        'Likes': videoDetails["likeCount"]
+    }
     
     if existing_thread is not None:
         existing_comments = existing_thread[0]
@@ -331,6 +390,34 @@ def process_and_save_data(response):
             "INSERT INTO Users (ChannelID, ProfilePictures, Usernames, ThreadIDs) VALUES (%s, %s, %s, %s) ON CONFLICT (ChannelID) DO UPDATE SET ProfilePictures = %s, Usernames = %s, ThreadIDs = %s", 
             (channel_id, user["ProfilePictures"], user["Usernames"], user["ThreadIDs"], user["ProfilePictures"], user["Usernames"], user["ThreadIDs"])
         )
+    
+    # Video database generate/update code starts here
+    
+    # Fetch the ThreadIDs for threads that match the VideoID
+    cur.execute("SELECT ThreadID FROM Threads WHERE VideoID = %s", (videoID,))
+    thread_ids_list = cur.fetchall()
+    
+    # Combine the ThreadIDs into one list while preventing duplicates
+    combined_thread_ids = list(set([thread_id for sublist in thread_ids_list for thread_id in sublist]))
+    
+    # Append the new thread ID if it's not already in the list
+    if threadID not in combined_thread_ids:
+        combined_thread_ids.append(threadID)
+    
+    print(combined_thread_ids)
+    if existing_video:
+        existing_video = existing_video[0]
+        #print(existing_video[])
+        #print(video['Title'])
+        # Video already exists, update the title and description arrays
+        title_array = list(set(existing_video["title"] + [video['Title']]))
+        description_array = list(set(existing_video["description"] + [video['Description']]))
+        
+        cur.execute("UPDATE Videos SET Title = %s, Description = %s, ThreadIDs = %s WHERE VideoID = %s", (title_array, description_array, combined_thread_ids, videoID))
+    else:
+        # Video doesn't exist, insert a new row
+        cur.execute("INSERT INTO Videos (VideoID, Title, Description, CommentCount, Views, ThreadIDs) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (videoID, [video['Title']], [video['Description']], video['Comment_Count'], video['Views'], combined_thread_ids))
         
     conn.commit()
     return comments
@@ -347,6 +434,29 @@ def create_vis_network():
     cur.execute("SELECT * FROM Threads")
     thread_data = [dict(row) for row in cur.fetchall()]
 
+    # Fetch data from the Videos table
+    cur.execute("SELECT VideoID, Title, Description, CommentCount, Views, ThreadIDs FROM Videos")
+    video_data_rows = cur.fetchall()
+    
+    # Format the fetched data into a dictionary
+    video_data = {}
+    for row in video_data_rows:
+        video_id = row[0]
+        title = row[1]
+        description = row[2]
+        comment_count = row[3]
+        views = row[4]
+        thread_ids = row[5]
+    
+        video_data[video_id] = {
+            "videoid": video_id,
+            "title": title,
+            "description": description,
+            "commentcount": comment_count,
+            "views": views,
+            "threadids": thread_ids
+        }
+
     # Close the cursor and connection
     cur.close()
     conn.close()
@@ -355,13 +465,24 @@ def create_vis_network():
     nodes = []
     edges = []
     
+    comment_thread_color = "#0bb400"  # Green
+    user_color = "#00b4a9"  # Blue
+    video_color = "#b4a900"  # Yellow
+    brightness_shift = 0.8
+    
     # Loop through user data and create user nodes
     for user in user_data:
         channel_id = user["channelid"]
         profile_pictures = user["profilepictures"]
         usernames = user["usernames"]
         thread_ids = user["threadids"]
-
+        description = user["description"] or ""
+        custom_color = user["color"] or ""
+        
+        if custom_color != "":
+            user_color = custom_color # Use custom color if it's set for that user
+            # TODO: Create custom user shapes?
+        
         # Create a unique node ID for the user
         node_id = f"user_{channel_id}"
 
@@ -371,11 +492,61 @@ def create_vis_network():
             "label": usernames[0],  # Assuming the first username is the primary one
             "group": "user",
             "image": profile_pictures[0],  # Assuming the first profile picture is the primary one
-            "title": f"Channel ID: {channel_id}\nProfile Pictures: {', '.join(profile_pictures)}\nUsernames: {', '.join(usernames)}"
+            "url": f"https://www.youtube.com/channel/{channel_id}",
+            "profilepictures": profile_pictures,
+            "usernames": usernames,
+            "description": description,
+            "color": {
+                "border": user_color, # Border color of node
+                "background": user_color, # Background color of node
+                "highlight": {
+                    "border": user_color, # Border color when node is highlighted
+                    "background": modify_hex_color(user_color, brightness_shift) # Background color when node is highlighted
+                }
+            }       
         }
 
         # Add the user node to the nodes list
         nodes.append(user_node)
+    
+    for video in video_data:
+        # Create a unique node ID for the thread
+        video_node_id = f"video_{video_data[video_id]['videoid']}"
+        video_id = video
+        # Create the thread node
+        video_node = {
+            "id": video_node_id,
+            "label": video_data[video_id]['title'][0],
+            "group": "video",
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "titles": video_data[video_id]['title'],
+            "views": video_data[video_id]['views'],
+            "commentcount": video_data[video_id]['commentcount'],
+            "threadids": video_data[video_id]['threadids'],
+            "description": video_data[video_id]['description'],
+            "color": {
+                "border": video_color, # Border color of node
+                "background": video_color, # Background color of node
+                "highlight": {
+                    "border": video_color, # Border color when node is highlighted
+                    "background": modify_hex_color(video_color, brightness_shift) # Background color when node is highlighted
+                }
+            }       
+        }
+        for thread in video_data[video_id]['threadids']:
+            thread_node_id = f"thread_{thread}"
+            video_edge = {
+                "from": video_node_id,
+                "to": thread_node_id,
+                "color": {
+                    "color": mix_hex_colors(video_color, comment_thread_color), # Color of the edge
+                    "highlight": modify_hex_color(mix_hex_colors(video_color, comment_thread_color), brightness_shift) # Color of the edge on highlight
+                }
+            }
+            edges.append(video_edge)
+    
+        # Add the thread node to the nodes list
+        nodes.append(video_node)
 
     # Loop through thread data and create thread nodes and edges
     for thread in thread_data:
@@ -398,51 +569,52 @@ def create_vis_network():
         # Create the thread node
         thread_node = {
             "id": thread_node_id,
-            "label": f"Thread {thread_id}",
+            "label": f"{thread_id}",
             "group": "thread",
-            "title": f"Thread ID: {thread_id}\nVideo ID: {video_id}\nDescription: {description}\nTags: {', '.join(tags)}\nChannel IDs: {', '.join(channel_ids)}"
+            "url": f"https://www.youtube.com/watch?v={video_id}&lc={thread_id}",
+            "description": description,
+            "tags": tags,
+            "color": {
+                "border": comment_thread_color, # Border color of node
+                "background": comment_thread_color, # Background color of node
+                "highlight": {
+                    "border": comment_thread_color, # Border color when node is highlighted
+                    "background": modify_hex_color(comment_thread_color, brightness_shift) # Background color when node is highlighted
+                }
+            }       
         }
     
         # Add the thread node to the nodes list
         nodes.append(thread_node)
         
-        # Create a unique node ID for the thread
-        video_node_id = f"video_{video_id}"
-        
-        # Create the thread node
-        video_node = {
-            "id": video_node_id,
-            "label": f"Video {video_id}",
-            "group": "video",
-            "title": f"Video ID: {video_id}"
-        }
-    
-        # Add the thread node to the nodes list
-        nodes.append(video_node)
-    
         # Create edges connecting thread nodes to user nodes
         for channel_id in channel_ids:
             user_node_id = f"user_{channel_id}"
             edge = {
                 "from": user_node_id,
-                "to": thread_node_id
+                "to": thread_node_id,
+                "color": {
+                    "color": mix_hex_colors(user_color, comment_thread_color), # Color of the edge
+                    "highlight": modify_hex_color(mix_hex_colors(user_color, comment_thread_color), brightness_shift) # Color of the edge on highlight
+                }
             }
             edges.append(edge)
-    
-        # Create edges connecting thread nodes to video nodes
-        video_node_id = f"video_{video_id}"
-        video_edge = {
-            "from": video_node_id,
-            "to": thread_node_id
-        }
-        edges.append(video_edge)
-    
 
     # Create a dictionary with the nodes and edges
     network_data = {
         "nodes": nodes,
         "edges": edges
     }
+    
+    # Convert nodes and edges to JSON strings
+    nodes_str = json.dumps(network_data["nodes"])
+    edges_str = json.dumps(network_data["edges"])
+    
+    # Save nodes and edges to file
+    with open("nodes.txt", "w") as file:
+        file.write("const nodes = " + nodes_str + ";")
+        file.write("\n\n")
+        file.write("const edges = " + edges_str + ";")
 
     return network_data
 
@@ -459,19 +631,111 @@ def add_comment(ChannelID, CommentID, Username, Comment, Comment_History, Likes,
         'Deleted': Deleted
     }
     return comment
-    
+
+def modify_hex_color(hex_code, brightness_adjustment):
+    # Initialize the cache dictionary if not already defined
+    if not hasattr(modify_hex_color, "cache"):
+        modify_hex_color.cache = {}
+
+    # Check if the modification is already in the cache
+    cache_key = (hex_code, brightness_adjustment)
+    if cache_key in modify_hex_color.cache:
+        return modify_hex_color.cache[cache_key]
+
+    # Remove any leading '#' character if present
+    hex_code = hex_code.lstrip('#')
+
+    # Adjust the format of hex_code to 'RRGGBB' if necessary
+    if len(hex_code) == 3:
+        hex_code = hex_code[0] + hex_code[0] + hex_code[1] + hex_code[1] + hex_code[2] + hex_code[2]
+
+    # Convert the hex code to RGB
+    rgb = tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
+
+    # Convert RGB to HSV
+    hsv = colorsys.rgb_to_hsv(rgb[0]/255, rgb[1]/255, rgb[2]/255)
+
+    # Adjust brightness and hue
+    brightness_factor = brightness_adjustment * 0.5
+
+    if brightness_adjustment > 0:
+        hue_factor = 0.05
+    elif brightness_adjustment < 0:
+        hue_factor = -0.05
+    else:
+        hue_factor = 0
+
+    modified_hsv = (hsv[0] + hue_factor, hsv[1], min(1.0, hsv[2] + brightness_factor))
+
+    # Convert modified HSV back to RGB
+    modified_rgb = colorsys.hsv_to_rgb(modified_hsv[0], modified_hsv[1], modified_hsv[2])
+
+    # Convert modified RGB to hex code
+    modified_hex = '#%02x%02x%02x' % (int(modified_rgb[0]*255), int(modified_rgb[1]*255), int(modified_rgb[2]*255))
+
+    # Store the modification in the cache
+    modify_hex_color.cache[cache_key] = modified_hex
+
+    return modified_hex
+
+def mix_hex_colors(hex_code1, hex_code2):
+    # Initialize the cache dictionary if not already defined
+    if not hasattr(mix_hex_colors, "cache"):
+        mix_hex_colors.cache = {}
+
+    # Check if the mix is already in the cache
+    cache_key = (hex_code1, hex_code2)
+    if cache_key in mix_hex_colors.cache:
+        return mix_hex_colors.cache[cache_key]
+
+    # Remove any leading '#' character if present
+    hex_code1 = hex_code1.lstrip('#')
+    hex_code2 = hex_code2.lstrip('#')
+
+    # Adjust the format of hex_code to 'RRGGBB' if necessary
+    if len(hex_code1) == 3:
+        hex_code1 = hex_code1[0] + hex_code1[0] + hex_code1[1] + hex_code1[1] + hex_code1[2] + hex_code1[2]
+    if len(hex_code2) == 3:
+        hex_code2 = hex_code2[0] + hex_code2[0] + hex_code2[1] + hex_code2[1] + hex_code2[2] + hex_code2[2]
+
+    # Convert the hex codes to RGB
+    rgb1 = tuple(int(hex_code1[i:i+2], 16) for i in (0, 2, 4))
+    rgb2 = tuple(int(hex_code2[i:i+2], 16) for i in (0, 2, 4))
+
+    # Mix the RGB values
+    mixed_rgb = tuple(int((c1 + c2) / 2) for c1, c2 in zip(rgb1, rgb2))
+
+    # Convert mixed RGB to hex code
+    mixed_hex = '#%02x%02x%02x' % mixed_rgb
+
+    # Store the mix in the cache
+    mix_hex_colors.cache[cache_key] = mixed_hex
+
+    return mixed_hex
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
-    #api_response = api_retrieve_thread("")
-    #json_object = json.dumps(api_response, indent = 4) 
-    #with open('api.json', 'w') as f:
-    #    f.write(json_object)
-    #if "items" in api_response and len(api_response["items"]) > 0: # If toplevel comment isn't deleted
-    #    comments = process_and_save_data(api_response)
+    threads = []
+    while threads:
+        thread = threads.pop(0)  # Get the first API string from the array and remove it
+        print(thread)
+        api_response = api_retrieve_thread(thread)
+        json_object = json.dumps(api_response, indent=4)
+        with open('api.json', 'w') as f:
+            f.write(json_object)
+        if "items" in api_response and len(api_response["items"]) > 0:  # If toplevel comment isn't deleted
+            comments = process_and_save_data(api_response)
+        time.sleep(2)
     vis_network_data = create_vis_network()
-    print(vis_network_data["nodes"])
-    print("\n\n")
-    print(vis_network_data["edges"])
+    #print(vis_network_data["nodes"])
+    #print("\n\n")
+    #print(vis_network_data["edges"])
     # Print the recreated comments variable
     #print(comments)
     # Close the cursor and the connection
