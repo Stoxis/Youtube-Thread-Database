@@ -29,6 +29,60 @@ def initiate_db():
     try:
         with open("settings.json", "r") as f:
             settings = json.load(f)
+            DB_Host = settings["db_url"]
+            DB_Name = settings["db_name"]
+            DB_User = settings["db_user"]
+            DB_Pass = settings["db_pass"]
+            
+            # Establish a connection to the database
+            conn = psycopg2.connect(
+                host=DB_Host,
+                database=DB_Name,
+                user=DB_User,
+                password=DB_Pass
+            )
+            
+            # Create a cursor
+            cur = conn.cursor(cursor_factory=extras.DictCursor)
+            
+            # Create the Threads table if it doesn't exist
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Threads (
+                    ThreadID TEXT PRIMARY KEY,
+                    VideoID TEXT,
+                    Description TEXT,
+                    Tags TEXT[],
+                    Thread JSONB,
+                    ChannelIDs TEXT[]
+                )
+            """)
+            
+            # Create the Videos table if it doesn't exist
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Videos (
+                    VideoID TEXT PRIMARY KEY,
+                    Title TEXT[],
+                    Description TEXT[],
+                    CommentCount INT,
+                    Views INT,
+                    ThreadIDs TEXT[]
+                )
+            """)
+            
+            # Create the Users table if it doesn't exist
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS Users (
+                    ChannelID TEXT PRIMARY KEY,
+                    ProfilePictures TEXT[],
+                    Usernames TEXT[],
+                    ThreadIDs TEXT[],
+                    Description TEXT,
+                    Color TEXT
+                )
+            """)
+            
+            # Commit the changes
+            conn.commit()
     except FileNotFoundError:
         settings = {
             "api_key": "",
@@ -40,61 +94,6 @@ def initiate_db():
             "max-results": "",
             "enable_cache": True
         }
-    
-    DB_Host = settings["db_url"]
-    DB_Name = settings["db_name"]
-    DB_User = settings["db_user"]
-    DB_Pass = settings["db_pass"]
-    
-    # Establish a connection to the database
-    conn = psycopg2.connect(
-        host=DB_Host,
-        database=DB_Name,
-        user=DB_User,
-        password=DB_Pass
-    )
-    
-    # Create a cursor
-    cur = conn.cursor(cursor_factory=extras.DictCursor)
-    
-    # Create the Threads table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS Threads (
-            ThreadID TEXT PRIMARY KEY,
-            VideoID TEXT,
-            Description TEXT,
-            Tags TEXT[],
-            Thread JSONB,
-            ChannelIDs TEXT[]
-        )
-    """)
-    
-    # Create the Videos table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS Videos (
-            VideoID TEXT PRIMARY KEY,
-            Title TEXT[],
-            Description TEXT[],
-            CommentCount INT,
-            Views INT,
-            ThreadIDs TEXT[]
-        )
-    """)
-    
-    # Create the Users table if it doesn't exist
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS Users (
-            ChannelID TEXT PRIMARY KEY,
-            ProfilePictures TEXT[],
-            Usernames TEXT[],
-            ThreadIDs TEXT[],
-            Description TEXT,
-            Color TEXT
-        )
-    """)
-    
-    # Commit the changes
-    conn.commit()
 
 initiate_db()
 
