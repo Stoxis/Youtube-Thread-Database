@@ -112,17 +112,9 @@ p, span, ul, li, a {
 <progress class="progress-bar" id="loadingbar" value="0" max="10000" ellipse=""></progress>
 <script type="text/javascript">
   // Sample data
-  const nodes = [
-    { id: 1, label: "Node 1", title: "Additional information for Node 1" },
-    { id: 2, label: "Node 2", title: "Additional information for Node 2" },
-    { id: 3, label: "Node 3", title: "Additional information for Node 3" },
-  ];
-  const edges = [
-    { from: 1, to: 2 },
-    { from: 2, to: 3 },
-    { from: 3, to: 1 },
-  ];
+const nodes = {{ nodes | safe }};
 
+const edges = {{ edges | safe }};
   // Create a new network instance
     var container = document.getElementById("mynetwork");
     var data = {

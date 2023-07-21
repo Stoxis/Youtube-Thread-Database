@@ -12,65 +12,99 @@ import googleapiclient.discovery
 from operator import itemgetter
 import colorsys
 import time
+import re
+from jinja2 import Template
+from fuzzywuzzy import fuzz
 
-# Establish a connection to the database
-conn = psycopg2.connect(
-    host="localhost",
-    database="put_database",
-    user="put_username",
-    password="put_password"
-)
+conn = None
+cur = None
+settings = None
 
-# Create a cursor
-cur = conn.cursor(cursor_factory=extras.DictCursor)
-
-# Create the Threads table if it doesn't exist
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS Threads (
-        ThreadID TEXT PRIMARY KEY,
-        VideoID TEXT,
-        Description TEXT,
-        Tags TEXT[],
-        Thread JSONB,
-        ChannelIDs TEXT[]
+def initiate_db():
+    global settings
+    global conn
+    global cur
+    # Load settings from file or create default settings
+    try:
+        with open("settings.json", "r") as f:
+            settings = json.load(f)
+    except FileNotFoundError:
+        settings = {
+            "api_key": "",
+            "db_name": "",
+            "db_user": "",
+            "db_pass": "",
+            "db_url": "",
+            "wait_time": "",
+            "max-results": ""
+        }
+    
+    DB_Host = settings["db_url"]
+    DB_Name = settings["db_name"]
+    DB_User = settings["db_user"]
+    DB_Pass = settings["db_pass"]
+    
+    # Establish a connection to the database
+    conn = psycopg2.connect(
+        host=DB_Host,
+        database=DB_Name,
+        user=DB_User,
+        password=DB_Pass
     )
-""")
+    
+    # Create a cursor
+    cur = conn.cursor(cursor_factory=extras.DictCursor)
+    
+    # Create the Threads table if it doesn't exist
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Threads (
+            ThreadID TEXT PRIMARY KEY,
+            VideoID TEXT,
+            Description TEXT,
+            Tags TEXT[],
+            Thread JSONB,
+            ChannelIDs TEXT[]
+        )
+    """)
+    
+    # Create the Videos table if it doesn't exist
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Videos (
+            VideoID TEXT PRIMARY KEY,
+            Title TEXT[],
+            Description TEXT[],
+            CommentCount INT,
+            Views INT,
+            ThreadIDs TEXT[]
+        )
+    """)
+    
+    # Create the Users table if it doesn't exist
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS Users (
+            ChannelID TEXT PRIMARY KEY,
+            ProfilePictures TEXT[],
+            Usernames TEXT[],
+            ThreadIDs TEXT[],
+            Description TEXT,
+            Color TEXT
+        )
+    """)
+    
+    # Commit the changes
+    conn.commit()
 
-# Create the Videos table if it doesn't exist
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS Videos (
-        VideoID TEXT PRIMARY KEY,
-        Title TEXT[],
-        Description TEXT[],
-        CommentCount INT,
-        Views INT,
-        ThreadIDs TEXT[]
-    )
-""")
+initiate_db()
 
-# Create the Users table if it doesn't exist
-cur.execute("""
-    CREATE TABLE IF NOT EXISTS Users (
-        ChannelID TEXT PRIMARY KEY,
-        ProfilePictures TEXT[],
-        Usernames TEXT[],
-        ThreadIDs TEXT[],
-        Description TEXT,
-        Color TEXT
-    )
-""")
-
-# Commit the changes
-conn.commit()
-
-def api_retrieve_thread(id):
+def api_retrieve_thread(id, update_output=None, clear_output=None, update_progressbar=None, get_input_values=None):
+    global settings
     # Disable OAuthlib's HTTPS verification when running locally.
     # *DO NOT* leave this option enabled in production.
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     api_service_name = "youtube"
     api_version = "v3"
-        api_service_name, api_version, developerKey=DEVELOPER_KEY)
+    YT_DEVELOPER_KEY = settings["api_key"]
 
     youtube = googleapiclient.discovery.build(
         api_service_name, api_version, developerKey=DEVELOPER_KEY)
@@ -87,6 +121,9 @@ def api_retrieve_thread(id):
         order="time"
     )
     topLevelComment = request.execute()
+    # Check if topLevelComment is empty
+    if "items" not in topLevelComment or len(topLevelComment["items"]) == 0:
+        return topLevelComment
     while True:
         request = youtube.comments().list(
             part="snippet",
@@ -135,18 +172,10 @@ def api_retrieve_thread(id):
     return topLevelComment
 
 
-def process_and_save_data(response):
+def process_and_save_data(response, update_output=None, clear_output=None, update_progressbar=None, get_input_values=None):
     global cur
     global conn
-    # TODO: Check if thread exists at the start
-    # TODO: if thread exists check if comments in the response already exist in the database, skip any that do, add any comments that don't exist to the comments dictionary.
-    # TODO: Check if there are comments in the database that don't exist in the response, if anything matches add the deleted:yes parameter to that comment
-    # TODO: Add message edit history if comment was modified
-    # TODO: Add message ID to each message. 
-    # If response message ID doesn't exist in database == new
-    # If response message doesn't match message in database but ID is same == new edited
-    # If database message ID doesn't exist in response == deleted
-    # If database message doesn't match message in response but ID is same == old edited
+    
     # Create the comments variable
     comments = []
     pfp_urls = {}
@@ -190,37 +219,6 @@ def process_and_save_data(response):
         existing_comments = existing_thread[0]
         # Thread already exists in the database
         # Perform actions for an existing thread
-        
-        # API Message ID (OP)
-        #response["items"][0]["snippet"]["topLevelComment"]["id"]
-        # API Comment (OP)
-        #response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-        
-        # API Message ID (Index)
-        #response["items"][0]["replies"]["comments"][index]["id"]
-        # API Comment (Index) 
-        #response["items"][0]["replies"]["comments"][index]["snippet"]["textDisplay"]
-        
-        # Database message id (OP)
-        #existing_comments[0]['CommentID']
-        # Database Comment (OP)
-        #existing_comments[0]['Comment']
-        
-        # Database message id (Index)
-        #existing_comments[index]['CommentID']
-        # Database Comment (Index)
-        #existing_comments[index]['Comment']
-        
-        # If API response message ID doesn't exist in database == new
-        # If API response message doesn't match message in database but ID is same == new edited
-        # If database message ID doesn't exist in API Response == deleted
-        # If database message doesn't match message in API Response but ID is same == old edited
-            
-    
-        # Check for new messages
-        # Check for edited messages
-        # Check for deleted messages
-        
         old_comments = []
         new_comments = []
         allAPIIDs = []
@@ -288,14 +286,24 @@ def process_and_save_data(response):
             print("New Comment:")
             print(comment)
         
-        for index, comment in enumerate(old_comments):
-            if comment["Deleted"]:
-                print("Deleted comment:")
-            elif comment["Comment_History"] != existing_comments[index]["Comment_History"]:
-                print("Edited comment:")
-            else:
-                print("Unmodified comment:")
-            print(comment)  
+        if update_output is not None:
+            for index, comment in enumerate(old_comments):
+                if comment["Deleted"]:
+                    update_output("Deleted comment:")
+                elif comment["Comment_History"] != existing_comments[index]["Comment_History"]:
+                    update_output("Edited comment:")
+                else:
+                    update_output("Unmodified comment:")
+                update_output(comment)  
+        else:
+            for index, comment in enumerate(old_comments):
+                if comment["Deleted"]:
+                    print("Deleted comment:")
+                elif comment["Comment_History"] != existing_comments[index]["Comment_History"]:
+                    print("Edited comment:")
+                else:
+                    print("Unmodified comment:")
+                print(comment)  
         comments = old_comments + new_comments
     else:
         # Thread does not exist in the database
@@ -331,7 +339,10 @@ def process_and_save_data(response):
                 'Deleted': False
             }
             comments.append(reply_comment)
-        print(comments)
+        if update_output is not None:
+            update_output(comments)
+        else:
+            print(comments)
     comments_json = json.dumps(comments)
     channelIDs = set(comment['ChannelID'] for comment in comments)
     # Insert a new row into Threads table, update if threadID already exists
@@ -407,8 +418,7 @@ def process_and_save_data(response):
     print(combined_thread_ids)
     if existing_video:
         existing_video = existing_video[0]
-        #print(existing_video[])
-        #print(video['Title'])
+        
         # Video already exists, update the title and description arrays
         title_array = list(set(existing_video["title"] + [video['Title']]))
         description_array = list(set(existing_video["description"] + [video['Description']]))
@@ -422,10 +432,9 @@ def process_and_save_data(response):
     conn.commit()
     return comments
 
-def create_vis_network():
+def create_vis_network(update_output=None, clear_output=None, update_progressbar=None, get_input_values=None):
     global cur
     global conn
-    #dictcur = conn.cursor(cursor_factory=extras.DictCursor)
     # Fetch data from the Users table
     cur.execute("SELECT * FROM Users")
     user_data = [dict(row) for row in cur.fetchall()]
@@ -456,10 +465,6 @@ def create_vis_network():
             "views": views,
             "threadids": thread_ids
         }
-
-    # Close the cursor and connection
-    cur.close()
-    conn.close()
 
     # Create empty lists to hold nodes and edges
     nodes = []
@@ -616,7 +621,86 @@ def create_vis_network():
         file.write("\n\n")
         file.write("const edges = " + edges_str + ";")
 
+    # Load the indexExample.html file
+    with open("indexTemplate.html") as file:
+        html_template = Template(file.read())
+
+    # Render the template with the network data
+    rendered_html = html_template.render(nodes=json.dumps(network_data["nodes"]), edges=json.dumps(network_data["edges"]))
+
+    # Save the rendered HTML to a new file or overwrite the existing one
+    with open("index.html", "w") as file:
+        file.write(rendered_html)
+
     return network_data
+
+def search_db(search_query, blacklist, search_type, returnresults_str):
+    global cur
+    global conn
+
+    if search_type == "user":
+        # Search the Threads database for thread IDs that contain the given channel ID in their channelids array
+        cur.execute("SELECT ThreadID FROM Threads WHERE %s = ANY (ChannelIDs)", (search_query,))
+        thread_ids = cur.fetchall()
+        return [thread_id[0] for thread_id in thread_ids]
+
+    elif search_type == "thread":
+        # Determine the SQL query condition based on the presence of blacklist
+        cur.execute("SELECT ChannelIDs FROM Threads WHERE ThreadID = %s", (search_query,))
+    
+        channel_ids = cur.fetchone()
+        if channel_ids is not None:
+            channel_ids = channel_ids[0]
+            filtered_channel_ids = []
+            for channel_id in channel_ids:
+                # Exclude blacklisted channels from the filtered channel IDs
+                if channel_id not in blacklist:
+                    filtered_channel_ids.append(channel_id)
+            # Search all other threads for any filtered channel ID matches
+            cur.execute("SELECT ThreadID FROM Threads WHERE %s && ChannelIDs", (filtered_channel_ids,))
+            thread_ids = cur.fetchall()
+            return [thread_id[0] for thread_id in thread_ids]
+        else:
+            return []
+        
+    elif search_type == "comment":
+        try:
+            returnresults = int(returnresults_str)
+        except ValueError:
+            # Handle the exception
+            returnresults = 10
+        cur.execute("SELECT Thread FROM Threads")
+        threads = cur.fetchall()
+        matching_comments = []
+        for thread in threads:
+            comments = thread[0]
+            for comment in comments:
+                comment_text = comment.get("Comment", "")
+                
+                # Remove special characters from the comment and search query
+                comment_text_cleaned = re.sub(r"[^\w\s]", "", comment_text)
+                search_query_cleaned = re.sub(r"[^\w\s]", "", search_query)
+                
+                # Tokenize the cleaned comment and search query into individual words
+                comment_words = comment_text_cleaned.lower().split()
+                search_words = search_query_cleaned.lower().split()
+                
+                # Find the common words between the comment and search query
+                common_words = [word for word in comment_words if word in search_words]
+                
+                # Calculate the ratio based on the common words
+                similarity_ratio = fuzz.ratio(" ".join(common_words), search_query_cleaned.lower())
+                
+                if similarity_ratio >= 5:  # Set a threshold for similarity
+                    matching_comments.append(comment)
+        
+        # Sort comments based on the ratio calculated from common words
+        top_similar_comments = sorted(matching_comments, key=lambda x: fuzz.ratio(" ".join(re.sub(r"[^\w\s]", "", x.get("Comment", "")).lower().split()), search_query_cleaned.lower()), reverse=True)[:returnresults]
+        return top_similar_comments
+
+    else:
+        return []  # Invalid search type
+
 
 def add_comment(ChannelID, CommentID, Username, Comment, Comment_History, Likes, PostDate, UpdateDate, Deleted):
     comment = {
@@ -713,14 +797,54 @@ def mix_hex_colors(hex_code1, hex_code2):
 
     return mixed_hex
 
+# Function to return a thread using it's ThreadID
+def get_thread_by_id(thread_id):
+    global cur
+    global conn
+    cur.execute("SELECT * FROM Threads WHERE ThreadID = %s", (thread_id,))
+    thread_data = [dict(row) for row in cur.fetchall()]
+    #for comment in thread:
+        #print(comment["Username"])
+    if thread_data:
+        thread = thread_data[0]["thread"]
+        return thread
+    else:
+        return None
 
+# Dictionary to cache user profile picture URLs
+user_cache = {}
 
+# Function to find a user's profile picture URL using ChannelID
+def get_profile_picture_url(channel_id):
+    # Check if the user is in the cache
+    if channel_id in user_cache:
+        return user_cache[channel_id]
+    
+    global cur
+    global conn
+    # If the user is not in the cache, query the database
+    cur.execute("SELECT ProfilePictures FROM Users WHERE ChannelID = %s", (channel_id,))
+    result = cur.fetchone()
 
+    if result:
+        profile_pictures = result[0]
+        if profile_pictures:
+            # Get the first URL from the profilepictures array
+            profile_picture_url = profile_pictures[0]
 
+            # Add the user to the cache
+            user_cache[channel_id] = profile_picture_url
 
+            # If the cache size exceeds 20, remove the oldest entry
+            if len(user_cache) > 20:
+                oldest_key = next(iter(user_cache.keys()))
+                del user_cache[oldest_key]
 
+            return profile_picture_url
 
-if __name__ == "__main__":
+    return None
+
+if __name__ == "__main__": # Directly ran
     threads = []
     while threads:
         thread = threads.pop(0)  # Get the first API string from the array and remove it
@@ -733,6 +857,18 @@ if __name__ == "__main__":
             comments = process_and_save_data(api_response)
         time.sleep(2)
     vis_network_data = create_vis_network()
+    #threads = [""]
+    #while threads:
+    #    thread = threads.pop(0)  # Get the first API string from the array and remove it
+    #    print(thread)
+    #    api_response = api_retrieve_thread(thread)
+    #    json_object = json.dumps(api_response, indent=4)
+    #    with open('api.json', 'w') as f:
+    #        f.write(json_object)
+    #    if "items" in api_response and len(api_response["items"]) > 0:  # If toplevel comment isn't deleted
+    #        comments = process_and_save_data(api_response)
+    #    time.sleep(2)
+    #vis_network_data = create_vis_network()
     #print(vis_network_data["nodes"])
     #print("\n\n")
     #print(vis_network_data["edges"])
@@ -741,57 +877,4 @@ if __name__ == "__main__":
     # Close the cursor and the connection
     cur.close()
     conn.close()
-
-# 
-
-
-    
-# Thread ID
-# object►items►0►id
-# Video ID
-# object►items►0►snippet►videoId
-
-# OP Username
-# object►items►0►snippet►topLevelComment►snippet►authorDisplayName
-# OP Channel ID
-# object►items►0►snippet►topLevelComment►snippet►authorChannelId►value
-# OP Comment
-# object►items►0►snippet►topLevelComment►snippet►textDisplay
-# OP post date
-# object►items►0►snippet►topLevelComment►snippet►publishedAt
-# OP update post date
-# object►items►0►snippet►topLevelComment►snippet►updatedAt
-# OP post likes
-# object►items►0►snippet►topLevelComment►snippet►likeCount
-# OP post comment ID
-# object►items►0►snippet►topLevelComment►id
-
-# Reply Username
-# object►items►0►replies►comments►0►snippet►authorDisplayName
-# Reply Channel ID
-# object►items►0►replies►comments►0►snippet►authorChannelId►value
-# Reply Comment
-# object►items►0►replies►comments►0►snippet►textDisplay
-# Reply post date
-# object►items►0►replies►comments►0►snippet►publishedAt
-# Reply update post date
-# object►items►0►replies►comments►0►snippet►updatedAt
-# Reply post likes
-# object►items►0►replies►comments►0►snippet►likeCount
-# Reply post comment ID
-# object►items►0►replies►comments►0►id
-
-
-
-
-#    json_object = json.dumps(response, indent = 4) 
-#    with open('api.json', 'w') as f:
-#        f.write(json_object)
-#    print(json_object)
-#    print(response["items"][0]["snippet"]["topLevelComment"]["snippet"]["textDisplay"])
-#    replies = response["items"][0]["replies"]["comments"]
-#    for i, reply in enumerate(replies):
-#        print(f"{reply['snippet']['textDisplay']}")
-
-
 
