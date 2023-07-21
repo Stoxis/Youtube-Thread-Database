@@ -12,12 +12,11 @@ import html
 from PIL import Image, ImageTk
 import requests
 from io import BytesIO
+import webbrowser
 import APIpostgres
 
 # TODO: Test what happens if no settings file exists and fix any issues
 # TODO: create a system to check threads automatically after a specific amount of time since it was last checked and notify you of any deletions or direct replies, or any specific keywords
-# TODO: create a comment visualizer for "comment" search option
-# TODO: (HTML) Youtube PFP Caching
 
 SETTINGS_FILE = "settings.json"
 
@@ -50,7 +49,7 @@ def select_all_text(event):
 common_fonts = ["Helvetica", "Arial", "Verdana", "Tahoma", "Times New Roman", "Courier New", "Georgia"]
 
 # Function to open the comment visualizer window
-def open_comment_visualizer(comments):
+def open_comment_visualizer(comments): # Make posted date link to actual comment
     comment_window = tk.Toplevel(root)
     comment_window.title("Comment Visualizer")
     
@@ -189,7 +188,8 @@ except FileNotFoundError:
         "db_pass": "",
         "db_url": "",
         "wait_time": "",
-        "max-results": ""
+        "max-results": "",
+        "enable_cache": True
     }
 
 # Save settings to file
@@ -201,6 +201,7 @@ def save_settings():
     settings["db_url"] = db_url_entry.get()
     settings["wait_time"] = wait_entry.get()
     settings["max-results"] = result_entry.get()
+    settings["enable_cache"] = enable_cache_var.get()
 
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f)
@@ -232,6 +233,7 @@ def get_input_values():
         "db_url": db_url_entry.get(),
         "wait_time": wait_entry.get(),
         "max-results": result_entry.get(),
+        "enable_cache": enable_cache_var.get(),
         "search_query": search_entry.get(),
         "search_type": search_type_var.get(),
         "urls": input_text.get("1.0", "end").strip().split("\n")
@@ -320,7 +322,11 @@ def view_comment_thread():
 
 
 # Check DB Option
-def check_database(): # TODO: Instead of getting 10 comments add an entry to put in a custom amount of retrived comments.
+def check_database_background():
+    thread = threading.Thread(target=check_database)
+    thread.start()
+
+def check_database():
     try:
         currentSettings = get_input_values()
         # Retrieve the search query from the input box
@@ -337,14 +343,18 @@ def check_database(): # TODO: Instead of getting 10 comments add an entry to put
         elif search_type == "thread":
             update_output(f"Results for search query ({search_type}) @ {search_query}: {matching}")
         elif search_type == "comment":
-            update_output(f"Results for search query ({search_type}) @ {search_query}:")
-            for comment in matching:
-                username = html.unescape(comment.get("Username", ""))
-                comment_text = html.unescape(comment.get("Comment", "")).replace("<br>", "\n")
-                comment_id = html.unescape(comment.get("CommentID", ""))
-                #output = f"({comment_id}) {username}: {comment_text}\n"
-                output = f"{username}:\n{comment_text}\n"
-                update_output(output)
+            if matching:
+                for comment in matching:
+                    comment["ProfilePictureURL"] = APIpostgres.get_profile_picture_url(comment["ChannelID"])
+                open_comment_visualizer(matching)
+                update_output(f"Results for search query ({search_type}) @ {search_query}:")
+                for comment in matching:
+                    username = html.unescape(comment.get("Username", ""))
+                    comment_text = html.unescape(comment.get("Comment", "")).replace("<br>", "\n")
+                    comment_id = html.unescape(comment.get("CommentID", ""))
+                    #output = f"({comment_id}) {username}: {comment_text}\n"
+                    output = f"{username}:\n{comment_text}\n"
+                    update_output(output)
     except Exception as e:
         traceback_info = traceback.format_exc()
         update_output(f"An error occurred: {e}\n{traceback_info}")
@@ -429,9 +439,16 @@ result_entry.insert(0, settings["max-results"])
 result_entry.bind("<Control-c>", copy_selected_text)
 result_entry.bind("<Control-a>", select_all_text)
 
+# Enable Cache Settings
+enable_cache_var = tk.BooleanVar()
+enable_cache_var.set(settings["enable_cache"])  # Set the initial value based on settings
+
+enable_cache_checkbtn = tk.Checkbutton(settings_frame, text="Enable downloading profile pictures locally?", variable=enable_cache_var)
+enable_cache_checkbtn.grid(row=7, columnspan=2, pady=5)
+
 # Save button
 save_button = tk.Button(settings_frame, text="Save Settings", command=save_settings)
-save_button.grid(row=7, columnspan=2, pady=10)
+save_button.grid(row=8, columnspan=2, pady=10)
 
 # Set row and column weights for resizing
 root.grid_rowconfigure(1, weight=1)
@@ -590,7 +607,7 @@ search_type_var.trace_add("write", lambda *args: blacklist_entry.grid() if searc
 blacklist_entry.bind("<FocusIn>", handle_blacklist_focus_in)
 blacklist_entry.bind("<FocusOut>", handle_blacklist_focus_out)
 
-search_button = tk.Button(check_frame, text="Search", command=check_database)
+search_button = tk.Button(check_frame, text="Search", command=check_database_background)
 search_button.grid(row=4, columnspan=2, pady=5, sticky="we")
 
 output_frame = tk.Frame(root)

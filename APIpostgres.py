@@ -13,8 +13,9 @@ from operator import itemgetter
 import colorsys
 import time
 import re
-from jinja2 import Template
 from fuzzywuzzy import fuzz
+from jinja2 import Template
+import urllib.request
 
 conn = None
 cur = None
@@ -36,7 +37,8 @@ def initiate_db():
             "db_pass": "",
             "db_url": "",
             "wait_time": "",
-            "max-results": ""
+            "max-results": "",
+            "enable_cache": True
         }
     
     DB_Host = settings["db_url"]
@@ -432,9 +434,20 @@ def process_and_save_data(response, update_output=None, clear_output=None, updat
     conn.commit()
     return comments
 
+def download_image(image_url, image_path):
+    # Check if the image has already been downloaded
+    if not os.path.exists(image_path):
+        try:
+            # Download the image
+            with urllib.request.urlopen(image_url) as response, open(image_path, 'wb') as out_file:
+                out_file.write(response.read())
+        except Exception as e:
+            print(f"Error downloading image: {e}")
+
 def create_vis_network(update_output=None, clear_output=None, update_progressbar=None, get_input_values=None):
     global cur
     global conn
+    global settings
     # Fetch data from the Users table
     cur.execute("SELECT * FROM Users")
     user_data = [dict(row) for row in cur.fetchall()]
@@ -490,13 +503,24 @@ def create_vis_network(update_output=None, clear_output=None, update_progressbar
         
         # Create a unique node ID for the user
         node_id = f"user_{channel_id}"
-
+        
+        if settings["enable_cache"]:
+            # Download the user's profile picture if not downloaded already
+            image_url = profile_pictures[0]
+            image_path = f"images/{channel_id}.jpg"
+            download_image(image_url, image_path)
+            # Set node PFP to local version
+            profile_picture = f"images/{channel_id}.jpg"  # Add 'f' before the string to format it correctly
+        else:
+            # Set node PFP to web version
+            profile_picture = profile_pictures[0]
+        
         # Create the user node
         user_node = {
             "id": node_id,
             "label": usernames[0],  # Assuming the first username is the primary one
             "group": "user",
-            "image": profile_pictures[0],  # Assuming the first profile picture is the primary one
+            "image": profile_picture,  # Use local path for the image
             "url": f"https://www.youtube.com/channel/{channel_id}",
             "profilepictures": profile_pictures,
             "usernames": usernames,
@@ -508,7 +532,7 @@ def create_vis_network(update_output=None, clear_output=None, update_progressbar
                     "border": user_color, # Border color when node is highlighted
                     "background": modify_hex_color(user_color, brightness_shift) # Background color when node is highlighted
                 }
-            }       
+            }
         }
 
         # Add the user node to the nodes list
